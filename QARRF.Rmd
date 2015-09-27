@@ -1,0 +1,121 @@
+---
+title: "Qualitative Activity Recognition with Random Forest"
+author: "Phat Q. Doan"
+date: "September 27, 2015"
+output: html_document
+---
+
+### 0. Overview
+
+Machine learning is being used widely for activity recognition in sport/excercise training. However, the majority of current researches is focusing on predicting *which activity* was performed at a given point of time, not on *how well* an activity is performed, while the latter, the qualitative aspect, can provide more useful information for improvement.
+
+Such an attempt on qualitative activity recognition was done by Velloso, E. et al (2013) to analyse how well people do weight lifting. The authors attached 4 sensors to the excercisers' arm, forearm, belt, and on the dumbbell, to record the position, acceleration etc... of various body parts and the dumbbell during an activity. 
+
+<img src="http://groupware.les.inf.puc-rio.br/static/WLE/on-body-sensing-schema.png" alt="Sensors-Location" height="291" width="180">
+
+<br>
+
+Each participant was required to do weight lifting in the correct manner, that is exactly according to the specification (classified as A), and also in other 4 incorrect manners: throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). There were a professional trainer to make sure the participants follow each of the intended manners. 
+
+The data collected by the sensors were analysized and an RF-based machine learning model were built to tell whether an excerciser is weight-lifting in a correct manner, and if he is not, which of the 4 mistake he has made. By providing real-time feedback, the model is able to let the excercisers assess the quality of their performance and improve on the go.
+
+More information on Velloso, E. et al research can be found [here](http://groupware.les.inf.puc-rio.br/har).
+
+This document uses the data that was made available by the aforementioned research to demonstrate how such model can be built. We will go through the following steps:
+
+- Read in the raw data collected from the sensors, remove unused variables and observations
+- Split the data into a trainining and a testing data set
+- Preprocess the data by scaling, centering, and performing a principal component analysis to further reduce the data size
+- Build an RF model using the training data set
+- Predict the classes in the testing data set
+- Obtaining the out-of-sample error rate
+
+Note that for demonstration, this project will only use a subset of the original data set. Additionally, our RF model is not necessarily the same as the one that Velloso, E. et al built for their research. All the steps are done with R in RStudio, using packages: *RMarkdown*, *caret*, *randomForest*, and *dplyr*.
+
+### 1. Read in the raw data
+
+The data can be downloaded from [here](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv).
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+options(warn = -1)
+require(caret)
+require(dplyr)
+require(randomForest)
+set.seed(321)
+options(warn = 0)
+```
+
+Reading the data file and telling R to mark empty or error cells as N/A:
+```{r,setoptions,cache=TRUE}
+data <- read.csv("pml-training.csv", na.strings = c("", "#DIV/0!", "NA"))
+```
+
+Inspecting the data size:
+```{r}
+dim(data)
+```
+
+There are 19622 observation and 160 variables. By inspecting the data, we learned that the first 7 variables are not needed as they are timestamps and observation indentifiers. There are several columns without data, and summary rows for time windows which can be ignore. All these columns and rows should be removed.
+
+```{r}
+na_count <-sapply(data, function(y) sum(length(which(is.na(y))))) # Determine columns with blank cells
+data <- data[, which(na_count == 0)] # Remove columns that have blank cells
+data <- data %>% tbl_df
+data <- filter(data, new_window == "no") # Remove the window summary rows
+data <- data[, -(1:7)] # Remove the identifier columns
+dim(data)
+```
+
+We are now down to 53 variables and 19216 observations. The last variables (53rd) is the outcome, activity classes.
+
+### 2. Splitting and preprocessing
+
+Split the data into 60% for training and 40% for testing.
+
+```{r}
+inTrain <- createDataPartition(data$classe, p = 0.6, list = FALSE)
+training <- data[inTrain, ]
+testing <- data[-inTrain, ]
+```
+
+Using the *preProcess* function in the *caret* package to create an object for principal component analysis. This will scale and center the data on the way. Note that we are specifying the threshold of 90% variance for preProcess to build the components in PCA.
+
+```{r}
+pre <- preProcess(training[, -53], method = "pca", thresh = 0.9)
+pre # Look at the preProcess object that have been created
+```
+
+We need 18 out of 52 predictors to explain 90% of the variance in the data. By using only these 18 principal components, we have reduced our data size significantly and this should shorten the time needed to train the model in the next steps.
+
+Let's actually preprocess the training and testing data set by applying the preProcess object on them:
+
+```{r}
+trainPCA <- predict(pre, newdata = training[, -53])
+testPCA <- predict(pre, newdata = testing[, -53])
+
+```
+
+### 3. Model training
+```{r}
+trainPCA$classe <- training$classe # Adding the outcome variable back to the trainPCA so it is available for training
+m <- randomForest(classe ~ ., data = trainPCA) # Use the default Random Forest training options
+m
+```
+
+We have a model built with 500 decision trees and the estimated error rate of 3.38%.
+
+### 4. Testing model performance
+
+Let's try predicting the classes of the test set to get a better idea of the model's performance:
+
+```{r}
+pred <- predict(m, newdata = testPCA)
+confusionMatrix(pred, testing$classe)
+```
+
+The accuracy of the prediction is `r paste0(round(confusionMatrix(pred, testing$classe)$overall[1]*100,2),"%")` thus the error rate is: **`r paste0(round(100- confusionMatrix(pred, testing$classe)$overall[1]*100, 2),"%")`**. This is close to the error rate that RF algorithm reported during training the model and should be considered the final out-of-sample error rate.
+
+### 5. Conclusion
+
+Random Forest is simple for model building yet very fast. By using the defaults parameters of the function, we are able to built quite a good a model that can predict a potential mistake that an excersicer has made at a low error rate.
+
